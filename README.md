@@ -31,9 +31,18 @@ connection and exposes presses to HA.
 | `binary_sensor.selfie_button_host_connected` | HID session up. Off while the remote sleeps — that's normal |
 | `button.selfie_button_host_forget_bond` | Drop all Classic bonds and restart pairing discovery |
 
-HID report map (measured 2026-08-13): keyboard report id `0x01` keycode
-`0x28` = take_photo; consumer report id `0x03` mask `0x08/0x02/0x04/0x10/0x01`
-= play_pause / volume_up / volume_down / skip_forward / skip_back.
+HID report map (verified by controlled per-button capture 2026-08-13):
+keyboard report id `0x01` keycode `0x28` = take_photo; consumer report id
+`0x03` mask `0x02/0x08/0x10/0x01/0x04` = play_pause / volume_up /
+volume_down / skip_forward / skip_back.
+
+Two characterization gotchas learned the hard way:
+- **The wake press never delivers a report** — it's consumed re-opening the
+  HID session. Don't characterize buttons from a wake press.
+- **take_photo double-transmits**: keyboard `0x28` *plus* consumer `0x08`
+  (vol+ — the iOS camera-shutter convention). Firmware suppresses a vol+
+  activation within 500 ms of keyboard activity so take_photo fires exactly
+  one event; standalone volume_up presses are unaffected.
 
 **HA side** (in `~/Projects/ha`): dashboard `selfie-remote` + package
 `packages/selfie_remote.yaml` — per-button entity dropdowns on the board and a

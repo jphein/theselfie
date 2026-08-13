@@ -21,19 +21,20 @@ static const char *const BUTTON_EVENT_TYPES[BTN_COUNT] = {
     "take_photo", "play_pause", "volume_up", "volume_down", "skip_forward", "skip_back",
 };
 
-// Consumer-control report (id 0x03) bitmask -> button index, measured 2026-08-13
-// against the physical remote: 03 00 <mask> 00
+// Consumer-control report (id 0x03) bitmask -> button index: 03 00 <mask> 00.
+// Verified by controlled per-button capture 2026-08-13 (second pass; the first
+// pass mis-attributed the masks because the wake press never delivers).
 static uint8_t consumer_mask_to_btn(uint8_t mask) {
   switch (mask) {
-    case 0x08:
-      return BTN_PLAY_PAUSE;
     case 0x02:
+      return BTN_PLAY_PAUSE;
+    case 0x08:
       return BTN_VOLUME_UP;
-    case 0x04:
-      return BTN_VOLUME_DOWN;
     case 0x10:
-      return BTN_SKIP_FORWARD;
+      return BTN_VOLUME_DOWN;
     case 0x01:
+      return BTN_SKIP_FORWARD;
+    case 0x04:
       return BTN_SKIP_BACK;
     default:
       return BTN_COUNT;  // unknown
@@ -304,10 +305,18 @@ void SelfieButton::hidh_cb(esp_hidh_cb_event_t event, esp_hidh_cb_param_t *param
           }
         }
         btn = BTN_TAKE_PHOTO;
+        self->last_kb_us_ = esp_timer_get_time();
       } else if (d.data[0] == 0x03 && d.len >= 3) {
         uint8_t mask = d.data[2];
         active = mask != 0;
         btn = consumer_mask_to_btn(mask);
+        // The take-photo key sends keyboard 0x28 AND consumer 0x08 (vol+, the
+        // iOS shutter) per press. A vol+ activation right after keyboard
+        // activity is that echo, not a real volume_up press - drop it.
+        if (active && mask == 0x08 && esp_timer_get_time() - self->last_kb_us_ < 500000) {
+          ESP_LOGD(TAG, "suppressing vol+ echo of take_photo");
+          break;
+        }
       } else {
         char hex[3 * 16 + 1] = {0};
         int n = d.len < 16 ? d.len : 16;

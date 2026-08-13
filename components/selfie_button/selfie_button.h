@@ -70,6 +70,7 @@ class SelfieButton : public Component {
   bool bt_ready_{false};
   bool hidh_ready_{false};
   bool report_active_{false};
+  int64_t last_kb_us_{0};  // last keyboard-report activity, for vol+ echo suppression
   uint32_t last_connect_attempt_ms_{0};
 };
 
