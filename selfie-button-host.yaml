@@ -26,10 +26,23 @@ wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
 
+# Slot 1 keeps the original entity names so existing dashboard/automation
+# references (…_connected, …_button, …_forget_bond) stay stable.
 selfie_button:
-  connected:
-    name: "Connected"
-  events:
-    name: "Button"
-  forget_bond:
-    name: "Forget Bond"
+  devices:
+    - slug: gabba
+      model: gabba_selfie
+      connected:
+        name: "Connected"
+      events:
+        name: "Button"
+      pair:
+        name: "Forget Bond"
+    - slug: remote2
+      model: generic
+      connected:
+        name: "Remote 2 Connected"
+      events:
+        name: "Remote 2 Button"
+      pair:
+        name: "Remote 2 Pair"

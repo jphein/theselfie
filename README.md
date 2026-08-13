@@ -25,11 +25,17 @@ connection and exposes presses to HA.
 
 ## Entities
 
-| Entity | Meaning |
+The firmware hosts up to 4 Classic HID devices as **slots** (`devices:` list in
+the YAML; controller ACL limit set to 2). Each slot pins its remote's MAC in
+NVS preferences and gets its own entities. Models: `gabba_selfie` (named
+events + vol+ echo suppression) or `generic` (deterministic `kb_key` /
+`consumer_bit_0`…`7` events for uncharacterized remotes).
+
+| Entity (slot 1 / slot 2) | Meaning |
 |---|---|
-| `event.selfie_button_host_button` | one event type per key, fired on press-down: `take_photo`, `play_pause`, `volume_up`, `volume_down`, `skip_forward`, `skip_back` |
-| `binary_sensor.selfie_button_host_connected` | HID session up. Off while the remote sleeps — that's normal |
-| `button.selfie_button_host_forget_bond` | Drop all Classic bonds and restart pairing discovery |
+| `event.…_button` / `event.…_remote_2_button` | per-key event types, fired on press-down (slot 1: `take_photo`, `play_pause`, `volume_up`, `volume_down`, `skip_forward`, `skip_back`; slot 2: generic until bench-mapped) |
+| `binary_sensor.…_connected` / `…_remote_2_connected` | HID session up. Off while that remote sleeps — that's normal |
+| `button.…_forget_bond` / `…_remote_2_pair` | per-slot Pair/Reset: forgets that slot's bond (if any) and opens a pairing window targeting the slot |
 
 HID report map (verified by controlled per-button capture 2026-08-13):
 keyboard report id `0x01` keycode `0x28` = take_photo; consumer report id
@@ -50,10 +56,13 @@ domain-smart dispatcher automation (media semantics / run / apply / toggle).
 
 ## Pairing
 
-1. Flash; on first boot (no bond) the firmware loops GAP discovery.
-2. Long-press the button until its LED blinks.
-3. It's found by HID Class-of-Device, connected, bonded (SSP just-works).
-   Bond survives reboots (Bluedroid NVS). To re-pair, press **Forget Bond**.
+1. First install (no bonds anywhere): a pairing window opens for slot 1
+   automatically. Otherwise press the slot's **Pair/Reset** button in HA.
+2. Long-press the remote until its LED blinks.
+3. It's found by HID Class-of-Device, connected, bonded (SSP just-works),
+   and its MAC is pinned to the slot in NVS. Discovery does NOT free-run —
+   it only scans while a pairing window is open, so the radio stays quiet
+   for connected remotes.
 
 ## Build & flash
 
