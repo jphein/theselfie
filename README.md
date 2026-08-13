@@ -35,6 +35,10 @@ HID report map (measured 2026-08-13): keyboard report id `0x01` keycode
 `0x28` = take_photo; consumer report id `0x03` mask `0x08/0x02/0x04/0x10/0x01`
 = play_pause / volume_up / volume_down / skip_forward / skip_back.
 
+**HA side** (in `~/Projects/ha`): dashboard `selfie-remote` + package
+`packages/selfie_remote.yaml` — per-button entity dropdowns on the board and a
+domain-smart dispatcher automation (media semantics / run / apply / toggle).
+
 ## Pairing
 
 1. Flash; on first boot (no bond) the firmware loops GAP discovery.
