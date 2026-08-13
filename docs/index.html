@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>theselfie — a $10 remote, reverse-engineered for Home Assistant</title>
+<meta name="description" content="Gabba Goods BT-Classic selfie remote turned into a six-button Home Assistant input via an ESP32 HID host. ESPHome external component, full teardown notes.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='6' y='2' width='20' height='28' rx='6' fill='%23131110'/%3E%3Ccircle cx='16' cy='11' r='5' fill='%23ffb454'/%3E%3Crect x='11' y='20' width='10' height='3' rx='1.5' fill='%236ad3d8'/%3E%3Crect x='11' y='25' width='10' height='2' rx='1' fill='%23555'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #14110e;
+  --bg-raise: #1c1814;
+  --bg-card: #191511;
+  --ink: #e8ddcb;
+  --ink-dim: #9c9080;
+  --amber: #ffb454;
+  --amber-deep: #d98324;
+  --cyan: #6ad3d8;
+  --line: #332c22;
+  --line-strong: #4a3f30;
+  --ok: #9ece6a;
+  --shadow: 0 20px 60px rgba(0,0,0,.55);
+  --grain: rgba(255,180,84,.03);
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f3ecdd;
+    --bg-raise: #ece3d0;
+    --bg-card: #faf5ea;
+    --ink: #26211a;
+    --ink-dim: #6d6355;
+    --amber: #b35c00;
+    --amber-deep: #8a4500;
+    --cyan: #0e7c82;
+    --line: #d8ccb4;
+    --line-strong: #b7a88c;
+    --ok: #3f7d1e;
+    --shadow: 0 20px 60px rgba(90,70,40,.18);
+    --grain: rgba(80,50,10,.03);
+  }
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 15px;
+  line-height: 1.65;
+  overflow-x: hidden;
+}
+/* hex-dump backdrop */
+body::before {
+  content: "";
+  position: fixed; inset: 0;
+  background-image:
+    repeating-linear-gradient(0deg, transparent 0 27px, var(--grain) 27px 28px);
+  pointer-events: none;
+  z-index: 0;
+}
+.hexstrip {
+  position: absolute;
+  font-size: 11px;
+  letter-spacing: .35em;
+  color: var(--ink-dim);
+  opacity: .28;
+  white-space: nowrap;
+  user-select: none;
+  pointer-events: none;
+}
+main { position: relative; z-index: 1; max-width: 1060px; margin: 0 auto; padding: 0 24px; }
+
+/* ---------- hero ---------- */
+header {
+  position: relative;
+  padding: 96px 0 72px;
+  border-bottom: 1px solid var(--line);
+}
+.kicker {
+  color: var(--cyan);
+  font-size: 12px;
+  letter-spacing: .28em;
+  text-transform: uppercase;
+  margin-bottom: 18px;
+  animation: rise .7s ease both;
+}
+h1 {
+  font-family: "Instrument Serif", serif;
+  font-weight: 400;
+  font-size: clamp(56px, 9vw, 108px);
+  line-height: .95;
+  letter-spacing: -.01em;
+  animation: rise .7s .08s ease both;
+}
+h1 .flourish { color: var(--amber); font-style: italic; }
+.sub {
+  max-width: 560px;
+  margin-top: 26px;
+  color: var(--ink-dim);
+  animation: rise .7s .16s ease both;
+}
+.sub strong { color: var(--ink); font-weight: 500; }
+.chips { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 34px; animation: rise .7s .24s ease both; }
+.chip {
+  font-size: 12px;
+  padding: 5px 13px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  color: var(--ink-dim);
+}
+.chip.hot { border-color: var(--amber); color: var(--amber); }
+.cta-row { margin-top: 36px; display: flex; gap: 14px; flex-wrap: wrap; animation: rise .7s .3s ease both; }
+.btn {
+  display: inline-block;
+  padding: 11px 22px;
+  border-radius: 6px;
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 600;
+  transition: transform .15s ease, box-shadow .15s ease;
+}
+.btn:hover { transform: translateY(-2px); }
+.btn-amber { background: var(--amber); color: var(--bg); box-shadow: 0 6px 24px rgba(255,180,84,.25); }
+.btn-ghost { border: 1px solid var(--line-strong); color: var(--ink); }
+@keyframes rise { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: none; } }
+
+/* ---------- section scaffolding ---------- */
+section { padding: 84px 0; border-bottom: 1px solid var(--line); }
+.secno {
+  color: var(--amber);
+  font-size: 12px;
+  letter-spacing: .3em;
+  text-transform: uppercase;
+  margin-bottom: 12px;
+}
+h2 {
+  font-family: "Instrument Serif", serif;
+  font-weight: 400;
+  font-size: clamp(32px, 5vw, 48px);
+  margin-bottom: 20px;
+}
+h2 em { color: var(--amber); }
+.prose { max-width: 640px; color: var(--ink-dim); }
+.prose strong { color: var(--ink); font-weight: 500; }
+.prose code, .note code, td code {
+  background: var(--bg-raise);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: .88em;
+}
+
+/* ---------- interactive remote ---------- */
+.bench {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: 56px;
+  align-items: start;
+  margin-top: 44px;
+}
+@media (max-width: 820px) { .bench { grid-template-columns: 1fr; } }
+.remote-wrap { position: relative; }
+.remote-wrap .callout {
+  position: absolute;
+  top: -14px; right: -8px;
+  font-size: 11px;
+  color: var(--cyan);
+  letter-spacing: .15em;
+  transform: rotate(4deg);
+}
+svg.remote { width: 100%; max-width: 320px; filter: drop-shadow(0 24px 40px rgba(0,0,0,.4)); }
+.rbtn { cursor: pointer; transition: opacity .15s ease; }
+.rbtn .face { transition: fill .18s ease, stroke .18s ease; }
+.rbtn:hover .face { stroke: var(--amber); stroke-width: 2.5; }
+.rbtn.active .face { fill: var(--amber); }
+.rbtn.active .glyph { fill: #14110e; stroke: #14110e; }
+.readout {
+  background: var(--bg-card);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.readout-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+  letter-spacing: .2em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+.readout-head .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+.readout-body { padding: 26px 28px 30px; }
+.ev-name {
+  font-family: "Instrument Serif", serif;
+  font-size: 40px;
+  color: var(--amber);
+  margin-bottom: 4px;
+}
+.ev-label { color: var(--ink-dim); font-size: 13px; margin-bottom: 22px; }
+.report {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px 18px;
+  font-size: 14px;
+  margin-bottom: 18px;
+}
+.report .lbl { color: var(--ink-dim); font-size: 11px; letter-spacing: .2em; text-transform: uppercase; display: block; margin-bottom: 6px; }
+.report .hex { color: var(--cyan); font-weight: 600; letter-spacing: .12em; }
+.report .hex b { color: var(--amber); }
+.ev-note { color: var(--ink-dim); font-size: 13.5px; }
+.ev-note em { color: var(--ink); font-style: normal; border-bottom: 1px dashed var(--amber-deep); }
+
+/* ---------- finding timeline ---------- */
+.steps { margin-top: 40px; display: grid; gap: 0; }
+.step {
+  display: grid;
+  grid-template-columns: 56px 1fr;
+  gap: 22px;
+  padding: 26px 0;
+  border-top: 1px dashed var(--line-strong);
+}
+.step:first-child { border-top: none; }
+.step .n {
+  font-family: "Instrument Serif", serif;
+  font-size: 40px;
+  color: var(--line-strong);
+  line-height: 1;
+}
+.step h3 { font-size: 16px; font-weight: 600; margin-bottom: 8px; }
+.step p { color: var(--ink-dim); font-size: 14px; max-width: 560px; }
+.verdict {
+  margin-top: 34px;
+  border-left: 3px solid var(--amber);
+  background: var(--bg-card);
+  padding: 20px 26px;
+  max-width: 640px;
+  font-size: 15px;
+}
+.verdict b { color: var(--amber); }
+
+/* ---------- how it works cards ---------- */
+.cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-top: 44px; }
+@media (max-width: 820px) { .cards { grid-template-columns: 1fr; } }
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 26px 24px 28px;
+  position: relative;
+  transition: transform .18s ease, border-color .18s ease;
+}
+.card:hover { transform: translateY(-4px); border-color: var(--amber-deep); }
+.card .tag { color: var(--cyan); font-size: 11px; letter-spacing: .25em; text-transform: uppercase; }
+.card h3 { font-family: "Instrument Serif", serif; font-weight: 400; font-size: 24px; margin: 10px 0 12px; }
+.card p { color: var(--ink-dim); font-size: 13.5px; }
+
+/* entities table */
+table { width: 100%; border-collapse: collapse; margin-top: 30px; font-size: 13.5px; }
+th, td { text-align: left; padding: 12px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--ink-dim); font-size: 11px; letter-spacing: .2em; text-transform: uppercase; font-weight: 500; }
+td:first-child { color: var(--cyan); white-space: nowrap; }
+
+/* ---------- field notes ---------- */
+.notes { display: grid; gap: 18px; margin-top: 44px; max-width: 720px; }
+.note {
+  background: var(--bg-card);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 22px 26px 22px 58px;
+  position: relative;
+  font-size: 14px;
+  color: var(--ink-dim);
+}
+.note::before {
+  content: "※";
+  position: absolute;
+  left: 22px; top: 18px;
+  color: var(--amber);
+  font-size: 20px;
+}
+.note b { color: var(--ink); }
+.note::after {
+  content: "";
+  position: absolute;
+  top: -8px; left: 50%;
+  transform: translateX(-50%) rotate(-1.5deg);
+  width: 84px; height: 18px;
+  background: var(--line-strong);
+  opacity: .5;
+}
+
+/* ---------- footer ---------- */
+footer {
+  padding: 60px 0 70px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  justify-content: space-between;
+  align-items: baseline;
+  color: var(--ink-dim);
+  font-size: 13px;
+}
+footer a { color: var(--amber); text-decoration: none; }
+footer a:hover { text-decoration: underline; }
+.sig { letter-spacing: .18em; font-size: 11px; text-transform: uppercase; }
+</style>
+</head>
+<body>
+
+<main>
+<header>
+  <div class="hexstrip" style="top:26px; left:2%;">01 00 00 28 00 00 00 00 00 · 03 00 08 00 · 03 00 02 00 · 03 00 10 00 · 03 00 01 00 · 03 00 04 00</div>
+  <div class="hexstrip" style="bottom:20px; right:0%;">rst:0x1 (POWERON_RESET) boot:0x13 · BT Classic HID host ready · bond stored</div>
+  <p class="kicker">Field notes · ESP32 · Bluetooth Classic</p>
+  <h1>the<span class="flourish">selfie</span></h1>
+  <p class="sub">A <strong>$10 selfie remote</strong> that turned out to be invisible to an entire BLE proxy mesh — so it got reverse-engineered into a <strong>six-button Home Assistant remote</strong>, hosted by an ESP32 speaking Bluetooth Classic HID.</p>
+  <div class="chips">
+    <span class="chip hot">ESPHome external component</span>
+    <span class="chip">BR/EDR-only Bluedroid</span>
+    <span class="chip">WROOM-32</span>
+    <span class="chip">GPLv3</span>
+  </div>
+  <div class="cta-row">
+    <a class="btn btn-amber" href="https://github.com/jphein/theselfie">Source on GitHub</a>
+    <a class="btn btn-ghost" href="#buttons">Inspect the buttons ↓</a>
+  </div>
+</header>
+
+<section id="buttons">
+  <p class="secno">01 · The hardware</p>
+  <h2>Six buttons, <em>two dialects</em> of HID</h2>
+  <p class="prose">Every key was characterized on the bench from raw Bluedroid <code>DATA_IND</code> reports. The photo key speaks <strong>keyboard</strong> (Enter, for Android camera apps) <em>and</em> echoes <strong>consumer volume-up</strong> (the iOS shutter convention) — the firmware suppresses the echo so one press means one event. Click a button:</p>
+
+  <div class="bench">
+    <div class="remote-wrap">
+      <span class="callout">← actual HID codes</span>
+      <svg class="remote" viewBox="0 0 300 520" role="img" aria-label="Schematic of the six-button remote">
+        <rect x="40" y="10" width="220" height="500" rx="44" fill="var(--bg-raise)" stroke="var(--line-strong)" stroke-width="2"/>
+        <rect x="52" y="22" width="196" height="476" rx="36" fill="none" stroke="var(--line)" stroke-width="1" stroke-dasharray="3 5"/>
+
+        <g class="rbtn" id="b-take_photo" data-ev="take_photo">
+          <circle class="face" cx="150" cy="120" r="62" fill="var(--bg-card)" stroke="var(--line-strong)" stroke-width="2"/>
+          <g class="glyph" fill="none" stroke="var(--amber)" stroke-width="4">
+            <rect x="122" y="103" width="56" height="38" rx="7"/>
+            <circle cx="150" cy="122" r="11"/>
+            <rect x="138" y="95" width="24" height="10" rx="3" fill="var(--amber)" stroke="none"/>
+          </g>
+        </g>
+
+        <g class="rbtn" id="b-volume_up" data-ev="volume_up">
+          <circle class="face" cx="95" cy="240" r="34" fill="var(--bg-card)" stroke="var(--line-strong)" stroke-width="2"/>
+          <g class="glyph" stroke="var(--cyan)" stroke-width="4" stroke-linecap="round" fill="none">
+            <path d="M95 226 v28 M81 240 h28"/>
+          </g>
+        </g>
+        <g class="rbtn" id="b-volume_down" data-ev="volume_down">
+          <circle class="face" cx="205" cy="240" r="34" fill="var(--bg-card)" stroke="var(--line-strong)" stroke-width="2"/>
+          <g class="glyph" stroke="var(--cyan)" stroke-width="4" stroke-linecap="round" fill="none">
+            <path d="M191 240 h28"/>
+          </g>
+        </g>
+
+        <g class="rbtn" id="b-skip_back" data-ev="skip_back">
+          <circle class="face" cx="95" cy="330" r="34" fill="var(--bg-card)" stroke="var(--line-strong)" stroke-width="2"/>
+          <g class="glyph" fill="var(--cyan)" stroke="none">
+            <path d="M108 316 v28 l-16 -14 z M92 316 v28 l-16 -14 z"/>
+          </g>
+        </g>
+        <g class="rbtn" id="b-skip_forward" data-ev="skip_forward">
+          <circle class="face" cx="205" cy="330" r="34" fill="var(--bg-card)" stroke="var(--line-strong)" stroke-width="2"/>
+          <g class="glyph" fill="var(--cyan)" stroke="none">
+            <path d="M192 316 v28 l16 -14 z M208 316 v28 l16 -14 z"/>
+          </g>
+        </g>
+
+        <g class="rbtn" id="b-play_pause" data-ev="play_pause">
+          <rect class="face" x="86" y="398" width="128" height="52" rx="26" fill="var(--bg-card)" stroke="var(--line-strong)" stroke-width="2"/>
+          <g class="glyph" fill="var(--cyan)" stroke="none">
+            <path d="M130 412 v24 l20 -12 z"/>
+            <rect x="160" y="412" width="6" height="24"/>
+            <rect x="171" y="412" width="6" height="24"/>
+          </g>
+        </g>
+
+        <text x="150" y="482" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" letter-spacing="4" fill="var(--ink-dim)">GABBA GOODS</text>
+      </svg>
+    </div>
+
+    <div class="readout">
+      <div class="readout-head"><span class="dot"></span> event.selfie_button_host_button</div>
+      <div class="readout-body">
+        <div class="ev-name" id="ro-name">take_photo</div>
+        <div class="ev-label" id="ro-label">the big shutter key</div>
+        <div class="report">
+          <span class="lbl">raw hid report</span>
+          <span class="hex" id="ro-hex">01 00 00 <b>28</b> 00 00 00 00 00</span>
+        </div>
+        <p class="ev-note" id="ro-note">Keyboard report, keycode <em>0x28 (Enter)</em>. Also transmits a consumer vol+ echo — the iOS shutter convention — which the firmware detects and drops within a 500&nbsp;ms window.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <p class="secno">02 · The finding</p>
+  <h2>Invisible to <em>every</em> BLE proxy in the house</h2>
+  <div class="steps">
+    <div class="step"><div class="n">1</div><div>
+      <h3>Scan the mesh</h3>
+      <p>Bermuda's <code>dump_devices</code> saw 357 BLE devices across the ESPHome proxy fleet — including an iTAG three metres from this remote. The remote itself: zero advertisements, even blinking in pairing mode.</p>
+    </div></div>
+    <div class="step"><div class="n">2</div><div>
+      <h3>Dual-radio test</h3>
+      <p>A desktop dual-mode adapter scanning LE and BR/EDR simultaneously heard the same silence on LE. Meanwhile a phone's Bluetooth settings listed it happily — in the <em>Classic</em> section.</p>
+    </div></div>
+    <div class="step"><div class="n">3</div><div>
+      <h3>Verdict</h3>
+      <p>It's Bluetooth Classic (BR/EDR). ESPHome's <code>bluetooth_proxy</code> forwards BLE advertisements only, so no BLE-based tracker can ever see this device. Not a bug — physics and protocol.</p>
+    </div></div>
+  </div>
+  <div class="verdict">If you can't track it, <b>repurpose it</b>: an original ESP32 — the only variant with a BR/EDR radio — becomes the HID host it always wanted.</div>
+</section>
+
+<section>
+  <p class="secno">03 · The build</p>
+  <h2>One component owns the <em>whole stack</em></h2>
+  <div class="cards">
+    <div class="card">
+      <div class="tag">Radio</div>
+      <h3>BR/EDR-only Bluedroid</h3>
+      <p>No BLE components on the node, BLE host compiled out, controller in Classic-only mode. The component initializes GAP + <code>esp_hidh</code> itself — nothing to fight ESPHome over.</p>
+    </div>
+    <div class="card">
+      <div class="tag">Pairing</div>
+      <h3>Blink &amp; bond</h3>
+      <p>Unbonded, it loops GAP discovery filtered by HID Class-of-Device. Long-press the remote until it blinks — found, connected, bonded. SSP confirm is pinned to that exact device; unsolicited pairing is rejected.</p>
+    </div>
+    <div class="card">
+      <div class="tag">Sleep cycle</div>
+      <h3>Wakes itself back in</h3>
+      <p>The remote sleeps aggressively. On press it re-pages the host (~2 s), and a 60 s retry pages it back as belt-and-braces. The wake press itself is consumed by reconnection — a characterization trap.</p>
+    </div>
+  </div>
+
+  <table>
+    <tr><th>Entity</th><th>Role</th></tr>
+    <tr><td><code>event.…_button</code></td><td>six event types, fired on press-down: <code>take_photo · play_pause · volume_up · volume_down · skip_forward · skip_back</code></td></tr>
+    <tr><td><code>binary_sensor.…_connected</code></td><td>HID session state — off while the remote sleeps, and that's honest</td></tr>
+    <tr><td><code>button.…_forget_bond</code></td><td>drop all Classic bonds and reopen pairing</td></tr>
+  </table>
+</section>
+
+<section>
+  <p class="secno">04 · Field notes</p>
+  <h2>Traps, <em>documented</em></h2>
+  <div class="notes">
+    <div class="note"><b>The wake press never delivers.</b> It spends itself re-opening the HID session, so any "press each button in order" characterization starts off-by-one. Anchor from the end of the sequence, or wake it with a throwaway press first.</div>
+    <div class="note"><b>take_photo double-transmits.</b> Keyboard 0x28 plus consumer 0x08 (vol+) per press — shutter compatibility for both phone platforms. Suppressed in firmware within 500 ms of keyboard activity; standalone volume presses pass through.</div>
+    <div class="note"><b>CP2102 + <code>esphome logs</code> = reset loop.</b> The log client's DTR/RTS handling holds the board in reset; the "log" is an endless newline flood. Read the console with a raw serial reader that parks both handshake lines.</div>
+  </div>
+</section>
+
+<footer>
+  <div>
+    <a href="https://github.com/jphein/theselfie">github.com/jphein/theselfie</a>
+    &nbsp;·&nbsp; GPLv3 &nbsp;·&nbsp; built on ESPHome + ESP-IDF Bluedroid
+  </div>
+  <div class="sig" id="sigil">theselfie · v1.0.0</div>
+</footer>
+</main>
+
+<script>
+const REPORTS = {
+  take_photo:   { label: "the big shutter key", hex: "01 00 00 <b>28</b> 00 00 00 00 00",
+    note: "Keyboard report, keycode <em>0x28 (Enter)</em>. Also transmits a consumer vol+ echo — the iOS shutter convention — which the firmware detects and drops within a 500&nbsp;ms window." },
+  play_pause:   { label: "media pill, bottom", hex: "03 00 <b>02</b> 00",
+    note: "Consumer-control report, mask <em>0x02</em>. Mapped to <em>media_play_pause</em> when the dashboard target is a media player." },
+  volume_up:    { label: "left of the rocker row", hex: "03 00 <b>08</b> 00",
+    note: "Consumer mask <em>0x08</em> — the same code take_photo echoes, which is why standalone presses are only trusted outside the echo window." },
+  volume_down:  { label: "right of the rocker row", hex: "03 00 <b>10</b> 00",
+    note: "Consumer mask <em>0x10</em>. Volume semantics on media players, toggle on anything else." },
+  skip_back:    { label: "transport, left", hex: "03 00 <b>04</b> 00",
+    note: "Consumer mask <em>0x04</em> — <em>media_previous_track</em> on media players." },
+  skip_forward: { label: "transport, right", hex: "03 00 <b>01</b> 00",
+    note: "Consumer mask <em>0x01</em> — <em>media_next_track</em> on media players." },
+};
+const buttons = document.querySelectorAll(".rbtn");
+function select(ev) {
+  buttons.forEach(b => b.classList.toggle("active", b.dataset.ev === ev));
+  const r = REPORTS[ev];
+  document.getElementById("ro-name").textContent = ev;
+  document.getElementById("ro-label").textContent = r.label;
+  document.getElementById("ro-hex").innerHTML = r.hex;
+  document.getElementById("ro-note").innerHTML = r.note;
+}
+buttons.forEach(b => b.addEventListener("click", () => select(b.dataset.ev)));
+select("take_photo");
+</script>
+</body>
+</html>
