@@ -27,6 +27,7 @@ enum SelfieNote : uint8_t {
   NOTE_LONG_PRESS = 4,
   NOTE_FOUND_DEVICE = 5,
   NOTE_DISC_STOPPED = 6,
+  NOTE_HIDH_READY = 7,
 };
 
 class SelfieButton : public Component {
@@ -56,6 +57,7 @@ class SelfieButton : public Component {
   bool connected_{false};
   bool discovering_{false};
   bool bt_ready_{false};
+  bool hidh_ready_{false};
   int64_t press_start_us_{0};
   bool report_active_{false};
   uint32_t last_connect_attempt_ms_{0};

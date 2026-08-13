@@ -57,10 +57,13 @@ void SelfieButton::setup() {
   this->bt_ready_ = true;
   ESP_LOGI(TAG, "BT Classic HID host ready");
 
+  // NOTE: do not page the bonded device here - esp_bt_hid_host_init() completes
+  // asynchronously; connecting before ESP_HIDH_INIT_EVT fails with status 17.
+  // The initial page happens in loop() on NOTE_HIDH_READY.
   if (this->load_bond_()) {
-    ESP_LOGI(TAG, "bonded device found, paging it");
-    esp_bt_hid_host_connect(this->target_addr_);
-    this->last_connect_attempt_ms_ = millis();
+    ESP_LOGI(TAG, "bond stored for %02x:%02x:%02x:%02x:%02x:%02x - will page once HIDH is up",
+             this->target_addr_[0], this->target_addr_[1], this->target_addr_[2], this->target_addr_[3],
+             this->target_addr_[4], this->target_addr_[5]);
   } else {
     ESP_LOGI(TAG, "no bond stored - starting discovery (make the button blink)");
     this->start_discovery_();
@@ -86,6 +89,14 @@ void SelfieButton::loop() {
       case NOTE_DISC_STOPPED:
         if (!this->have_bond_ && !this->connected_)
           this->start_discovery_();  // re-arm until paired
+        break;
+      case NOTE_HIDH_READY:
+        this->hidh_ready_ = true;
+        if (this->have_bond_ && !this->connected_) {
+          ESP_LOGI(TAG, "HIDH up - paging bonded button");
+          esp_bt_hid_host_connect(this->target_addr_);
+          this->last_connect_attempt_ms_ = millis();
+        }
         break;
       case NOTE_CONNECTED:
         this->connected_ = true;
@@ -114,7 +125,7 @@ void SelfieButton::loop() {
   }
   // Belt-and-braces: the primary reconnect path is the button paging us on wake,
   // but page the bonded button ourselves every 60 s while disconnected.
-  if (this->bt_ready_ && this->have_bond_ && !this->connected_ &&
+  if (this->bt_ready_ && this->hidh_ready_ && this->have_bond_ && !this->connected_ &&
       millis() - this->last_connect_attempt_ms_ > 60000) {
     ESP_LOGD(TAG, "retry paging bonded button");
     esp_bt_hid_host_connect(this->target_addr_);
@@ -207,12 +218,25 @@ void SelfieButton::gap_cb(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *pa
       }
       break;
     case ESP_BT_GAP_AUTH_CMPL_EVT:
-      ESP_LOGI(TAG, "auth complete, status=%d", param->auth_cmpl.stat);
+      if (param->auth_cmpl.stat == ESP_BT_STATUS_SUCCESS) {
+        ESP_LOGI(TAG, "auth complete");
+      } else {
+        // Failed auth: drop any half-made bond for that peer and stop trusting it
+        ESP_LOGW(TAG, "auth FAILED status=%d - removing bond for that peer", param->auth_cmpl.stat);
+        esp_bt_gap_remove_bond_device(param->auth_cmpl.bda);
+      }
       break;
-    case ESP_BT_GAP_CFM_REQ_EVT:
-      // Just-works numeric confirm - the button has no display, accept
-      esp_bt_gap_ssp_confirm_reply(param->cfm_req.bda, true);
+    case ESP_BT_GAP_CFM_REQ_EVT: {
+      // SSP numeric confirm. Only accept for the exact device we initiated pairing
+      // with (found via discovery this session) and only while still unbonded;
+      // reject anything else so a nearby attacker can't self-pair as a "button".
+      bool expecting = !self->have_bond_ &&
+                       std::memcmp(param->cfm_req.bda, self->target_addr_, sizeof(esp_bd_addr_t)) == 0;
+      esp_bt_gap_ssp_confirm_reply(param->cfm_req.bda, expecting);
+      if (!expecting)
+        ESP_LOGW(TAG, "rejected unsolicited pairing attempt");
       break;
+    }
     default:
       break;
   }
@@ -225,6 +249,7 @@ void SelfieButton::hidh_cb(esp_hidh_cb_event_t event, esp_hidh_cb_param_t *param
   switch (event) {
     case ESP_HIDH_INIT_EVT:
       ESP_LOGI(TAG, "HIDH initialized, status=%d", param->init.status);
+      self->note(NOTE_HIDH_READY);
       break;
     case ESP_HIDH_OPEN_EVT:
       if (param->open.status == ESP_HIDH_OK && param->open.conn_status == ESP_HIDH_CONN_STATE_CONNECTED) {
