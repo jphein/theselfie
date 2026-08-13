@@ -1,8 +1,8 @@
 # theselfie
 
-ESPHome firmware that turns a **Gabba Goods "The Selfie"** Bluetooth camera
-shutter button into a Home Assistant input, using an original ESP32
-(WROOM-32) as a Bluetooth **Classic** HID host.
+ESPHome firmware that turns a **Gabba Goods "The Selfie"** Bluetooth remote
+(6 buttons: shutter + media controls) into Home Assistant inputs, using an
+original ESP32 (WROOM-32) as a Bluetooth **Classic** HID host.
 
 ## Why this exists (the finding)
 
@@ -27,9 +27,13 @@ connection and exposes presses to HA.
 
 | Entity | Meaning |
 |---|---|
-| `event.selfie_button_host_button` | `press` / `long_press` (≥600 ms, classified on release) |
-| `binary_sensor.selfie_button_host_connected` | HID session up. Off while the button sleeps — that's normal |
+| `event.selfie_button_host_button` | one event type per key, fired on press-down: `take_photo`, `play_pause`, `volume_up`, `volume_down`, `skip_forward`, `skip_back` |
+| `binary_sensor.selfie_button_host_connected` | HID session up. Off while the remote sleeps — that's normal |
 | `button.selfie_button_host_forget_bond` | Drop all Classic bonds and restart pairing discovery |
+
+HID report map (measured 2026-08-13): keyboard report id `0x01` keycode
+`0x28` = take_photo; consumer report id `0x03` mask `0x08/0x02/0x04/0x10/0x01`
+= play_pause / volume_up / volume_down / skip_forward / skip_back.
 
 ## Pairing
 

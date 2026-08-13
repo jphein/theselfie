@@ -16,9 +16,33 @@ namespace selfie_button {
 static const char *const TAG = "selfie_button";
 SelfieButton *global_selfie_button = nullptr;  // NOLINT
 
+// Order must match SelfieButtonIndex in selfie_button.h
+static const char *const BUTTON_EVENT_TYPES[BTN_COUNT] = {
+    "take_photo", "play_pause", "volume_up", "volume_down", "skip_forward", "skip_back",
+};
+
+// Consumer-control report (id 0x03) bitmask -> button index, measured 2026-08-13
+// against the physical remote: 03 00 <mask> 00
+static uint8_t consumer_mask_to_btn(uint8_t mask) {
+  switch (mask) {
+    case 0x08:
+      return BTN_PLAY_PAUSE;
+    case 0x02:
+      return BTN_VOLUME_UP;
+    case 0x04:
+      return BTN_VOLUME_DOWN;
+    case 0x10:
+      return BTN_SKIP_FORWARD;
+    case 0x01:
+      return BTN_SKIP_BACK;
+    default:
+      return BTN_COUNT;  // unknown
+  }
+}
+
 void SelfieButton::setup() {
   global_selfie_button = this;
-  this->queue_ = xQueueCreate(16, sizeof(uint8_t));
+  this->queue_ = xQueueCreate(16, sizeof(uint16_t));
 
   esp_bt_controller_mem_release(ESP_BT_MODE_BLE);
 
@@ -71,8 +95,10 @@ void SelfieButton::setup() {
 }
 
 void SelfieButton::loop() {
-  uint8_t n;
-  while (this->queue_ != nullptr && xQueueReceive(this->queue_, &n, 0) == pdTRUE) {
+  uint16_t item;
+  while (this->queue_ != nullptr && xQueueReceive(this->queue_, &item, 0) == pdTRUE) {
+    uint8_t n = item & 0xFF;
+    uint8_t btn = item >> 8;
     switch (n) {
       case NOTE_FOUND_DEVICE: {
         if (this->connected_ || this->have_bond_)
@@ -110,14 +136,11 @@ void SelfieButton::loop() {
           this->connected_sensor_->publish_state(false);
         break;
       case NOTE_PRESS:
-        ESP_LOGD(TAG, "press");
+        if (btn >= BTN_COUNT)
+          break;
+        ESP_LOGD(TAG, "press: %s", BUTTON_EVENT_TYPES[btn]);
         if (this->event_ != nullptr)
-          this->event_->trigger("press");
-        break;
-      case NOTE_LONG_PRESS:
-        ESP_LOGD(TAG, "long_press");
-        if (this->event_ != nullptr)
-          this->event_->trigger("long_press");
+          this->event_->trigger(BUTTON_EVENT_TYPES[btn]);
         break;
       default:
         break;
@@ -160,8 +183,8 @@ void SelfieButton::forget_bond() {
   this->start_discovery_();
 }
 
-void SelfieButton::note(SelfieNote n) {
-  uint8_t v = n;
+void SelfieButton::note(SelfieNote n, uint8_t btn) {
+  uint16_t v = uint16_t(n) | (uint16_t(btn) << 8);
   // BT callbacks run in the Bluedroid task (not an ISR)
   xQueueSend(this->queue_, &v, 0);
 }
@@ -261,33 +284,47 @@ void SelfieButton::hidh_cb(esp_hidh_cb_event_t event, esp_hidh_cb_param_t *param
       break;
     case ESP_HIDH_CLOSE_EVT:
       ESP_LOGI(TAG, "HID device disconnected");
-      // If it vanished mid-press (sleep), close out as a short press
-      if (self->report_active_) {
-        self->report_active_ = false;
-        self->note(NOTE_PRESS);
-      }
+      self->report_active_ = false;
       self->note(NOTE_DISCONNECTED);
       break;
     case ESP_HIDH_DATA_IND_EVT: {
       auto &d = param->data_ind;
-      // Raw report visibility while characterizing the button
-      ESP_LOG_BUFFER_HEX_LEVEL(TAG, d.data, d.len, ESP_LOG_DEBUG);
-      // Active = any nonzero payload byte (skip byte 0 when it looks like a report ID)
+      if (d.len < 1)
+        break;
+      // Reports measured from this remote (2026-08-13):
+      //   keyboard  id 0x01: 01 <mod> 00 <keycode>... , 0x28 = take photo
+      //   consumer  id 0x03: 03 00 <mask> 00 - see consumer_mask_to_btn()
       bool active = false;
-      int start = (d.len > 1) ? 1 : 0;
-      for (int i = start; i < d.len; i++) {
-        if (d.data[i] != 0) {
-          active = true;
-          break;
+      uint8_t btn = BTN_COUNT;
+      if (d.data[0] == 0x01 && d.len >= 4) {
+        for (int i = 1; i < d.len; i++) {
+          if (d.data[i] != 0) {
+            active = true;
+            break;
+          }
         }
+        btn = BTN_TAKE_PHOTO;
+      } else if (d.data[0] == 0x03 && d.len >= 3) {
+        uint8_t mask = d.data[2];
+        active = mask != 0;
+        btn = consumer_mask_to_btn(mask);
+      } else {
+        char hex[3 * 16 + 1] = {0};
+        int n = d.len < 16 ? d.len : 16;
+        for (int i = 0; i < n; i++)
+          snprintf(hex + i * 3, 4, "%02x ", d.data[i]);
+        ESP_LOGW(TAG, "unrecognized report len=%d: %s", d.len, hex);
+        break;
       }
       if (active && !self->report_active_) {
         self->report_active_ = true;
-        self->press_start_us_ = esp_timer_get_time();
+        if (btn < BTN_COUNT) {
+          self->note(NOTE_PRESS, btn);  // fire on press-down for instant response
+        } else {
+          ESP_LOGW(TAG, "unknown button code in report id=%#04x", d.data[0]);
+        }
       } else if (!active && self->report_active_) {
         self->report_active_ = false;
-        int64_t held_ms = (esp_timer_get_time() - self->press_start_us_) / 1000;
-        self->note(held_ms >= 600 ? NOTE_LONG_PRESS : NOTE_PRESS);
       }
       break;
     }

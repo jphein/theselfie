@@ -38,7 +38,18 @@ async def to_code(config):
         cg.add(var.set_connected_sensor(sens))
     if conf := config.get(CONF_EVENTS):
         ev = cg.new_Pvariable(conf[CONF_ID])
-        await event.register_event(ev, conf, event_types=["press", "long_press"])
+        await event.register_event(
+            ev,
+            conf,
+            event_types=[
+                "take_photo",
+                "play_pause",
+                "volume_up",
+                "volume_down",
+                "skip_forward",
+                "skip_back",
+            ],
+        )
         cg.add(var.set_event(ev))
     if conf := config.get(CONF_FORGET_BOND):
         btn = cg.new_Pvariable(conf[CONF_ID])

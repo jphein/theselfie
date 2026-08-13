@@ -19,15 +19,26 @@ namespace selfie_button {
 
 class SelfieEvent : public event::Event {};
 
-// Notifications from BT-task callbacks to loop(); entity work happens only in loop()
+// Notifications from BT-task callbacks to loop(); entity work happens only in loop().
+// Queue items are uint16_t: low byte = SelfieNote, high byte = button index.
 enum SelfieNote : uint8_t {
   NOTE_CONNECTED = 1,
   NOTE_DISCONNECTED = 2,
   NOTE_PRESS = 3,
-  NOTE_LONG_PRESS = 4,
   NOTE_FOUND_DEVICE = 5,
   NOTE_DISC_STOPPED = 6,
   NOTE_HIDH_READY = 7,
+};
+
+// Order must match BUTTON_EVENT_TYPES in selfie_button.cpp
+enum SelfieButtonIndex : uint8_t {
+  BTN_TAKE_PHOTO = 0,
+  BTN_PLAY_PAUSE = 1,
+  BTN_VOLUME_UP = 2,
+  BTN_VOLUME_DOWN = 3,
+  BTN_SKIP_FORWARD = 4,
+  BTN_SKIP_BACK = 5,
+  BTN_COUNT = 6,
 };
 
 class SelfieButton : public Component {
@@ -43,7 +54,7 @@ class SelfieButton : public Component {
  protected:
   static void gap_cb(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *param);
   static void hidh_cb(esp_hidh_cb_event_t event, esp_hidh_cb_param_t *param);
-  void note(SelfieNote n);
+  void note(SelfieNote n, uint8_t btn = 0);
   void start_discovery_();
   bool load_bond_();
 
@@ -58,7 +69,6 @@ class SelfieButton : public Component {
   bool discovering_{false};
   bool bt_ready_{false};
   bool hidh_ready_{false};
-  int64_t press_start_us_{0};
   bool report_active_{false};
   uint32_t last_connect_attempt_ms_{0};
 };
