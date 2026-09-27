@@ -100,3 +100,7 @@ s.dtr = False; s.rts = False
 
 Flashing with `esphome upload` (esptool) is unaffected. Network logs via
 `esphome logs` (OTA/api, no `--device`) are also fine once WiFi is up.
+
+## License
+
+AGPL-3.0-or-later © 2026 Jeffrey Pine Hein. See [LICENSE](LICENSE).
